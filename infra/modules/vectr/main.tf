@@ -1,4 +1,4 @@
-# Get most recent attack instance AMI id
+# Get most recent VECTR instance AMI id
 data "aws_ami" "vectr" {
 
   most_recent = true
@@ -23,4 +23,10 @@ resource "aws_instance" "vectr" {
   tags = {
     Name = "Thunderdome VECTR"
   }
+}
+
+# Public IP for VECTR server
+resource "aws_eip" "vectr_public" {
+  instance = aws_instance.vectr[0].id
+  vpc      = true
 }
