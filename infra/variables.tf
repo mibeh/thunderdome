@@ -20,12 +20,12 @@ variable "enable_vpn" {
 
 variable "kali_count" {
   description = "The number of Kali instances to deploy"
-  default     = 0
+  default     = 1
   type        = number
 }
 
 variable "enable_vectr" {
   description = "If set to true, deploys a public-facing instance of VECTR"
-  default     = false
+  default     = true
   type        = bool
 }
