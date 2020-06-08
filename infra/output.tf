@@ -29,3 +29,8 @@ output "NETWORK_ENDPOINTS" {
   value       = module.vpc.NETWORK_ENDPOINTS
   description = "The CIDR block for the VPC endpoints subnet"
 }
+
+output "VECTR_HOST" {
+  value = module.vectr.public_ip
+  description = "Command to add VECTR to hosts file"
+}
