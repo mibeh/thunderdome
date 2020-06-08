@@ -20,11 +20,11 @@ This project organized into several modules. First is the VPC,  which contains t
 
 `git clone <clone url> && cd thunderdome/`
 
-`scripts/setup.sh`
+`cd scripts/ && ./setup.sh`
 
 If you want to use the Client VPN option:
 
-`scripts/gen_vpn_certs.sh`
+`./gen_vpn_certs.sh`
 
 ### Workflow
 

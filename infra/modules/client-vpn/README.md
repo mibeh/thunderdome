@@ -1,3 +1,7 @@
+## Requirements
+
+No requirements.
+
 ## Inputs
 
 | Name | Description | Type | Default |
@@ -20,3 +24,4 @@
 | Name | Description |
 |------|-------------|
 | vpn\_endpoint\_cidr | The CIDR block for the VPN endpoints, needed for VPC module |
+

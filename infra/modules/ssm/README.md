@@ -1,3 +1,7 @@
+## Requirements
+
+No requirements.
+
 ## Inputs
 
 | Name | Description | Type | Default |
