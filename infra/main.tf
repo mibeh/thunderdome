@@ -42,7 +42,6 @@ module "kali" {
   offense_subnet    = module.vpc.offense_subnet_id
 }
 
-
 module "vectr" {
 
   source        = "./modules/vectr"
