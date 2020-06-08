@@ -1,4 +1,4 @@
-# Variables for the VPC
+# Variables for the root module
 
 variable "vpc_region" {
   type        = string
@@ -8,24 +8,24 @@ variable "vpc_region" {
 
 variable "enable_ssm" {
   default     = true
-  description = "If set to true, enable auto scaling"
+  description = "If set to true, enables SSM"
   type        = bool
 }
 
 variable "enable_vpn" {
   default     = true
-  description = "If set to true, enable auto scaling"
+  description = "If set to true, enables the Client VPN Endpoint"
   type        = bool
 }
 
 variable "kali_count" {
-  description = "If set to true, enable auto scaling"
+  description = "The number of Kali instances to deploy"
   default     = 0
   type        = number
 }
 
 variable "enable_vectr" {
-  description = "If set to true, enable auto scaling"
+  description = "If set to true, deploys a public-facing instance of VECTR"
   default     = false
   type        = bool
 }
