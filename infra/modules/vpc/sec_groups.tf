@@ -275,7 +275,7 @@ resource "aws_security_group" "dmz" {
       cidr_blocks = [
         "0.0.0.0/0",
       ]
-      description      = "HTTPS for Interface Endpoints"
+      description      = "HTTPS DMZ"
       from_port        = 443
       ipv6_cidr_blocks = []
       prefix_list_ids  = []
@@ -301,7 +301,7 @@ resource "aws_security_group" "dmz" {
       cidr_blocks = [
         "0.0.0.0/0",
       ]
-      description      = "Needed for VECTR"
+      description      = "Needed for VECTR updates"
       from_port        = 81
       ipv6_cidr_blocks = []
       prefix_list_ids  = []
