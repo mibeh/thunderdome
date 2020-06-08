@@ -1,8 +1,6 @@
 # VPN Config files
 .vpn-info/*
 
-terraform
-
 ### Packer ###
 # Cache objects
 **/packer_cache/*
