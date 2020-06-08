@@ -1,0 +1,59 @@
+{
+  "builders": [
+    {
+      "access_key": "{{user `aws_access_key`}}",
+      "ami_name": "thunderdome_vectr_centos_7_{{isotime | clean_resource_name}}",
+      "instance_type": "t3a.medium",
+      "region": "{{user `region`}}",
+      "secret_key": "{{user `aws_secret_key`}}",
+      "source_ami_filter": {
+        "filters": {
+          "name": "CentOS Linux 7 x86_64 HVM EBS*",
+          "root-device-type": "ebs",
+          "virtualization-type": "hvm"
+        },
+        "most_recent": true,
+        "owners": [
+          "679593333241"
+        ]
+      },
+      "ssh_username": "centos",
+      "tags": {
+        "Name": "Thunderdome VECTR CentOS 7 {{isotime}}"
+      },
+      "type": "amazon-ebs"
+    }
+  ],
+  "provisioners": [
+    {
+      "inline": [
+        "sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo",
+        "sudo yum install docker-ce git unzip wget -y",
+        "sudo systemctl enable docker.service",
+        "sudo systemctl start docker.service",
+        "sudo curl -L https://github.com/docker/compose/releases/download/1.25.4/docker-compose-`uname -s`-`uname -m` -o /usr/local/bin/docker-compose",
+        "sudo chmod +x /usr/local/bin/docker-compose",
+        "sudo ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose",
+        "sudo systemctl status docker",
+        "sudo mkdir -p /opt/vectr",
+        "cd /opt/vectr",
+        "sudo wget https://github.com/SecurityRiskAdvisors/VECTR/releases/download/ce-5.5.7/sra-vectr-runtime-5.5.7-ce.zip",
+        "sudo unzip sra-vectr-runtime-5.5.7-ce.zip"
+      ],
+      "type": "shell"
+    },
+    {
+      "inline": [
+        "sudo yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm",
+        "sudo systemctl enable amazon-ssm-agent", 
+        "sudo systemctl restart amazon-ssm-agent"
+      ],
+      "type": "shell"
+    }
+  ],
+  "variables": {
+    "aws_access_key": "",
+    "aws_secret_key": "",
+    "region": "us-east-1"
+  }
+}

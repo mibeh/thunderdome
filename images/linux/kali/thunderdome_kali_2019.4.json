@@ -1,0 +1,44 @@
+{
+  "builders": [
+    {
+      "access_key": "{{user `aws_access_key`}}",
+      "ami_name": "thunderdome_kali_2019.4_{{isotime | clean_resource_name}}",
+      "instance_type": "t2.medium",
+      "region": "us-east-1",
+      "secret_key": "{{user `aws_secret_key`}}",
+      "source_ami_filter": {
+        "filters": {
+          "name": "Kali Linux 2019.4-*",
+          "root-device-type": "ebs",
+          "virtualization-type": "hvm"
+        },
+        "most_recent": true,
+        "owners": [
+          "679593333241"
+        ]
+      },
+      "ssh_username": "ec2-user",
+      "tags": {
+        "Name": "Thunderdome Kali 2019.4 {{isotime}}"
+      },
+      "type": "amazon-ebs"
+    }
+  ],
+  "provisioners": [
+    {
+      "inline": [
+        "wget https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb",
+        "sleep 5",
+        "sudo bash -c \"dpkg -i amazon-ssm-agent.deb\"",
+        "sudo bash -c \"systemctl enable amazon-ssm-agent\"",
+        "rm -f amazon-ssm-agent.deb"
+      ],
+      "type": "shell"
+    }
+  ],
+  "variables": {
+    "aws_access_key": "",
+    "aws_secret_key": "",
+    "region": "us-east-1"
+  }
+}
