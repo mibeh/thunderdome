@@ -3,7 +3,7 @@
 resource "aws_route_table" "vuln" {
   vpc_id = aws_vpc.thunderdome_vpc.id
   tags = {
-    Name = "Vuln"
+    Name = "Thunderdome Vulnerable Route Table"
   }
   route {
     cidr_block     = "0.0.0.0/0"
@@ -19,7 +19,7 @@ resource "aws_route_table_association" "vuln" {
 resource "aws_route_table" "offense" {
   vpc_id = aws_vpc.thunderdome_vpc.id
   tags = {
-    Name = "Offense"
+    Name = "Thunderdome Offense Route Table"
   }
   route {
     cidr_block     = "0.0.0.0/0"
@@ -35,7 +35,7 @@ resource "aws_route_table_association" "offense" {
 resource "aws_route_table" "nat" {
   vpc_id = aws_vpc.thunderdome_vpc.id
   tags = {
-    Name = "NAT"
+    Name = "Thunderdoem NAT Route Table"
   }
   route {
     cidr_block = "0.0.0.0/0"
@@ -46,4 +46,21 @@ resource "aws_route_table" "nat" {
 resource "aws_route_table_association" "nat" {
   subnet_id      = aws_subnet.nat.id
   route_table_id = aws_route_table.nat.id
+}
+
+
+resource "aws_route_table" "dmz" {
+  vpc_id = aws_vpc.thunderdome_vpc.id
+  tags = {
+    Name = "Thunderdome DMZ Route Table"
+  }
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+}
+
+resource "aws_route_table_association" "dmz" {
+  subnet_id      = aws_subnet.dmz.id
+  route_table_id = aws_route_table.dmz.id
 }
