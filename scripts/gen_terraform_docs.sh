@@ -1,9 +1,10 @@
 #!/bin/sh
 
 # Keep module docs up to date
-terraform-docs md table ../infra/ --no-providers --no-required > ../infra/README.md
+terraform-docs markdown table --hide providers --required=false ../infra/ >../infra/README.md
 
-for d in $(ls -1 ../infra/modules/)
-do
-  terraform-docs md table ../infra/modules/$d --no-providers --no-required > ../infra/modules/$d/README.md
+for module_directory in ../infra/modules/*; do
+  [ -d "${module_directory}" ] || continue
+  terraform-docs markdown table --hide providers --required=false "${module_directory}" \
+    >"${module_directory}/README.md"
 done

@@ -1,49 +1,92 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-function terraform-install() {
- 
-  LATEST_URL=$(curl -sL https://releases.hashicorp.com/terraform/index.json | jq -r '.versions[].builds[].url' | grep -E -v 'rc|beta|alpha|oci' | sort -t. -k 1.2,1n -k 2,2n -k 3,3n -k 4,4n | grep .12.26 | grep -E 'linux.*amd64' | tail -1)
-  curl "${LATEST_URL}" > /tmp/terraform.zip
-  (cd /usr/bin && sudo unzip /tmp/terraform.zip && rm -f /tmp/terraform.zip)
-  
-  echo "Installed: $(/usr/bin/terraform version)"
+set -euo pipefail
 
+readonly HASHICORP_KEYRING_PATH="/usr/share/keyrings/hashicorp-archive-keyring.gpg"
+readonly HASHICORP_REPOSITORY_PATH="/etc/apt/sources.list.d/hashicorp.list"
+readonly TERRAFORM_DOCS_VERSION="${TERRAFORM_DOCS_VERSION:-0.25.1}"
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+THUNDERDOME_INSTALL=$(cd -- "${SCRIPT_DIR}/.." && pwd)
+export THUNDERDOME_INSTALL
+
+install_dependencies() {
+  sudo apt-get update
+  sudo apt-get install -y ca-certificates curl gnupg jq lsb-release wget
 }
 
-function packer-install() {
-  
- 
-  LATEST_URL=$(curl -sL https://releases.hashicorp.com/packer/index.json | jq -r '.versions[].builds[].url' | grep 'linux.*amd64' |tail -1)
-  curl "${LATEST_URL}" > /tmp/packer.zip
-  (cd /usr/bin && sudo unzip /tmp/packer.zip && rm -f /tmp/packer.zip)
-  
-  echo "Installed: $(/usr/bin/packer version)"
-  
+install_hashicorp_repository() {
+  local architecture
+  local distribution_codename
+
+  wget -O - https://apt.releases.hashicorp.com/gpg \
+    | sudo gpg --dearmor --yes -o "${HASHICORP_KEYRING_PATH}"
+
+  architecture=$(dpkg --print-architecture)
+  distribution_codename=$(grep -oP '(?<=UBUNTU_CODENAME=).*' /etc/os-release || lsb_release -cs)
+  if [[ -z "${distribution_codename}" ]]; then
+    printf '%s\n' "Unable to determine the Ubuntu or Debian release codename." >&2
+    return 1
+  fi
+
+  printf 'deb [arch=%s signed-by=%s] https://apt.releases.hashicorp.com %s main\n' \
+    "${architecture}" "${HASHICORP_KEYRING_PATH}" "${distribution_codename}" \
+    | sudo tee "${HASHICORP_REPOSITORY_PATH}" >/dev/null
+
+  sudo apt-get update
 }
 
-function terraform-docs-install() {
-
-	curl -s https://api.github.com/repos/segmentio/terraform-docs/releases/latest \
-	| grep 'browser_download_url.*linux-amd64' \
-	| cut -d : -f 2,3 \
-	| tr -d \" \
-	| wget -qi - 
-	sudo chmod +x terraform-docs-v*
-	sudo cp terraform-docs-v* /usr/bin/terraform-docs
-	rm -f terraform-docs-v*
-
-	echo "Installed: $(sudo /usr/bin/terraform-docs --version)"
+install_hashicorp_tools() {
+  sudo apt-get install -y packer terraform
 }
 
-# Install dependencies
-sudo apt-get install curl jq -y
+install_terraform_docs() {
+  local architecture
+  local archive_path
+  local platform
+  local temporary_directory
 
-terraform-install
-terraform-docs-install
-packer-install
+  architecture=$(dpkg --print-architecture)
+  case "${architecture}" in
+    amd64 | arm64) ;;
+    *)
+      printf 'terraform-docs does not have a configured download for architecture: %s\n' \
+        "${architecture}" >&2
+      return 1
+      ;;
+  esac
 
-# Set env var for Thunderdome install dir
-export THUNDERDOME_INSTALL=$(dirname `pwd`)
+  platform=$(uname -s)
+  temporary_directory=$(mktemp -d)
+  archive_path="${temporary_directory}/terraform-docs.tar.gz"
 
-# Initialize Terraform & download providers
-cd ../infra && sudo -u "${USER}" terraform init
+  (
+    trap 'rm -rf "${temporary_directory}"' EXIT
+
+    curl -sSLo "${archive_path}" \
+      "https://terraform-docs.io/dl/v${TERRAFORM_DOCS_VERSION}/terraform-docs-v${TERRAFORM_DOCS_VERSION}-${platform}-${architecture}.tar.gz"
+    tar -xzf "${archive_path}" -C "${temporary_directory}"
+    sudo install -m 0755 "${temporary_directory}/terraform-docs" /usr/local/bin/terraform-docs
+  )
+}
+
+print_versions() {
+  terraform version
+  packer version
+  terraform-docs --version
+}
+
+main() {
+  install_dependencies
+  install_hashicorp_repository
+  install_hashicorp_tools
+  install_terraform_docs
+  print_versions
+
+  (
+    cd "${THUNDERDOME_INSTALL}/infra"
+    terraform init
+  )
+}
+
+main "$@"
