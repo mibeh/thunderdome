@@ -1,42 +1,22 @@
-# Systems Session Manager related VPC endpoints
-# The SSM agent is pre-installed on the images
-resource "aws_vpc_endpoint" "ssm" {
-  count             = var.enabled ? 1 : 0
-  vpc_id            = var.vpc_id
-  service_name      = join(".", ["com.amazonaws", var.vpc_region, "ssm"])
-  vpc_endpoint_type = "Interface"
-  subnet_ids = [
-    var.interface_endpoints_subnet,
-  ]
-  security_group_ids = [
-    var.vpc_endpoint_sec_group,
-  ]
+locals {
+  ssm_endpoint_services = toset([
+    "ec2messages",
+    "ssm",
+    "ssmmessages",
+  ])
 }
 
-# EC2 Messages, needed for SSM
-resource "aws_vpc_endpoint" "ec2messages" {
-  count             = var.enabled ? 1 : 0
-  vpc_id            = var.vpc_id
-  service_name      = join(".", ["com.amazonaws", var.vpc_region, "ec2messages"])
-  vpc_endpoint_type = "Interface"
-  subnet_ids = [
-    var.interface_endpoints_subnet,
-  ]
-  security_group_ids = [
-    var.vpc_endpoint_sec_group,
-  ]
-}
+resource "aws_vpc_endpoint" "ssm_endpoints" {
+  for_each = var.enable_ssm_endpoints ? local.ssm_endpoint_services : toset([])
 
-# SSM Messages, needed for SSM
-resource "aws_vpc_endpoint" "ssmmessages" {
-  count             = var.enabled ? 1 : 0
-  vpc_id            = var.vpc_id
-  service_name      = join(".", ["com.amazonaws", var.vpc_region, "ssmmessages"])
-  vpc_endpoint_type = "Interface"
-  subnet_ids = [
-    var.interface_endpoints_subnet,
-  ]
-  security_group_ids = [
-    var.vpc_endpoint_sec_group,
-  ]
+  vpc_id              = var.vpc_id
+  service_name        = "com.amazonaws.${var.vpc_region}.${each.key}"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = [var.interface_endpoints_subnet]
+  security_group_ids  = [var.vpc_endpoint_sec_group]
+
+  tags = {
+    Name = "Thunderdome ${each.key} endpoint"
+  }
 }

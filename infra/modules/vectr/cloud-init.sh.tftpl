@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly VECTR_VERSION='${vectr_version}'
+readonly VECTR_RELEASE_SHA256='${vectr_release_sha256}'
+readonly VECTR_RELEASE_URL=https://github.com/SecurityRiskAdvisors/VECTR/releases/download/ce-$VECTR_VERSION/sra-vectr-runtime-$VECTR_VERSION-ce.zip
+readonly DATA_DEVICE_NAME='${data_device_name}'
+readonly DATA_VOLUME_ID='${data_volume_id}'
+readonly DATA_VOLUME_ID_NORMALIZED=$${DATA_VOLUME_ID//-/}
+readonly DATA_MOUNT='${data_mount_path}'
+readonly DATA_LABEL='${data_filesystem_label}'
+readonly RUNTIME_DIR=$DATA_MOUNT/runtime
+readonly DOCKER_DATA_ROOT=$DATA_MOUNT/docker
+readonly RELEASE_MARKER=$DATA_MOUNT/.vectr-release
+readonly ZONE_NAME='${zone_name}'
+
+start_ssm_agent() {
+  if systemctl list-unit-files --type=service | grep -q '^amazon-ssm-agent.service'; then
+    systemctl enable --now amazon-ssm-agent.service
+    return
+  fi
+
+  if ! snap list amazon-ssm-agent >/dev/null 2>&1; then
+    snap install amazon-ssm-agent --classic
+  fi
+  systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
+}
+
+resolve_data_device() {
+  local root_source
+  local root_parent
+  local root_disk
+  local candidate
+  local resolved
+  local attempt
+
+  root_source=$(readlink -f "$(findmnt -n -o SOURCE /)")
+  root_parent=$(lsblk -ndo PKNAME "$root_source" 2>/dev/null || true)
+  root_disk=$root_source
+  [[ -n "$root_parent" ]] && root_disk="/dev/$root_parent"
+
+  for ((attempt = 1; attempt <= 120; attempt++)); do
+    for candidate in \
+      "/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_$DATA_VOLUME_ID_NORMALIZED" \
+      "$DATA_DEVICE_NAME" \
+      /dev/xvdf; do
+      resolved=$(readlink -f "$candidate" 2>/dev/null || true)
+      [[ -b "$resolved" ]] || continue
+      [[ "$resolved" != "$root_source" && "$resolved" != "$root_disk" ]] || continue
+      [[ "$(lsblk -ndo PKNAME "$resolved" 2>/dev/null || true)" != "$root_parent" ]] || continue
+      printf '%s\n' "$resolved"
+      return 0
+    done
+    sleep 5
+  done
+
+  return 1
+}
+
+mount_data_volume() {
+  local data_device
+  local filesystem_type
+  local filesystem_uuid
+
+  data_device=$(resolve_data_device) || {
+    printf '%s\n' 'The VECTR data volume did not appear before the timeout.' >&2
+    return 1
+  }
+
+  filesystem_type=$(blkid -s TYPE -o value "$data_device" 2>/dev/null || true)
+  if [[ -z "$filesystem_type" ]]; then
+    mkfs.ext4 -L "$DATA_LABEL" "$data_device"
+    filesystem_type=ext4
+  fi
+  if [[ "$filesystem_type" != ext4 ]]; then
+    printf 'Refusing to mount unexpected VECTR filesystem type: %s\n' "$filesystem_type" >&2
+    return 1
+  fi
+
+  filesystem_uuid=$(blkid -s UUID -o value "$data_device")
+  install -d -m 0755 "$DATA_MOUNT"
+  if ! grep -Fq "UUID=$filesystem_uuid $DATA_MOUNT " /etc/fstab; then
+    printf 'UUID=%s %s ext4 defaults,nofail 0 2\n' "$filesystem_uuid" "$DATA_MOUNT" >>/etc/fstab
+  fi
+  mountpoint -q "$DATA_MOUNT" || mount "$DATA_MOUNT"
+}
+
+configure_docker_data_root() {
+  install -d -m 0755 "$DOCKER_DATA_ROOT" /etc/docker
+  if [[ -f /etc/docker/daemon.json ]]; then
+    if ! grep -Fq "\"data-root\": \"$DOCKER_DATA_ROOT\"" /etc/docker/daemon.json; then
+      printf '%s\n' 'Existing Docker daemon configuration uses another data root; refusing to overwrite it.' >&2
+      return 1
+    fi
+    return
+  fi
+
+  printf '{\n  "data-root": "%s"\n}\n' "$DOCKER_DATA_ROOT" >/etc/docker/daemon.json
+  chmod 0644 /etc/docker/daemon.json
+}
+
+install_docker() {
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y ca-certificates curl unzip openssl
+
+  if ! command -v docker >/dev/null 2>&1; then
+    install -m 0755 -d /etc/apt/keyrings
+    curl --fail --location --silent --show-error \
+      https://download.docker.com/linux/ubuntu/gpg \
+      --output /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+    printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu %s stable\n' \
+      "$(dpkg --print-architecture)" "$(. /etc/os-release && printf '%s' "$VERSION_CODENAME")" \
+      >/etc/apt/sources.list.d/docker.list
+    apt-get update
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  fi
+
+  systemctl enable --now docker.service
+}
+
+set_env_value() {
+  local key=$1
+  local value=$2
+  local env_file=$RUNTIME_DIR/.env
+
+  grep -Fq "$key=" "$env_file" || {
+    printf 'VECTR release is missing expected environment key: %s\n' "$key" >&2
+    return 1
+  }
+  sed -i "s|^$key=.*|$key=$value|" "$env_file"
+}
+
+configure_initial_env() {
+  set_env_value VECTR_HOSTNAME "$ZONE_NAME"
+  set_env_value VECTR_DATA_KEY "$(openssl rand -hex 32)"
+  set_env_value JWS_KEY "$(openssl rand -hex 32)"
+  set_env_value JWE_KEY "$(openssl rand -hex 32)"
+  set_env_value REDIS_PASSWORD "$(openssl rand -hex 32)"
+  set_env_value POSTGRES_PASSWORD "$(openssl rand -hex 32)"
+  chmod 0600 "$RUNTIME_DIR/.env"
+}
+
+install_vectr_release() {
+  local expected_marker="$VECTR_VERSION $VECTR_RELEASE_SHA256"
+  local work_dir
+  local archive
+  local staging_dir
+
+  if [[ -f "$RELEASE_MARKER" ]] \
+    && [[ "$(cat "$RELEASE_MARKER")" == "$expected_marker" ]] \
+    && [[ -s "$RUNTIME_DIR/docker-compose.yml" ]] \
+    && [[ -s "$RUNTIME_DIR/.env" ]]; then
+    return
+  fi
+
+  work_dir=$(mktemp -d /tmp/vectr-release.XXXXXX)
+  archive=$work_dir/sra-vectr-runtime.zip
+  staging_dir=$work_dir/runtime
+  trap 'rm -rf "$work_dir"' EXIT
+
+  curl --fail --location --silent --show-error --output "$archive" "$VECTR_RELEASE_URL"
+  printf '%s  %s\n' "$VECTR_RELEASE_SHA256" "$archive" | sha256sum --check --status
+  install -d -m 0755 "$staging_dir"
+  unzip -q "$archive" -d "$staging_dir"
+
+  install -d -m 0755 "$RUNTIME_DIR"
+  install -m 0644 "$staging_dir/docker-compose.yml" "$RUNTIME_DIR/docker-compose.yml"
+  install -m 0644 "$staging_dir/README.md" "$RUNTIME_DIR/README.md"
+  if [[ ! -f "$RUNTIME_DIR/.env" ]]; then
+    install -m 0600 "$staging_dir/.env" "$RUNTIME_DIR/.env"
+    configure_initial_env
+  fi
+
+  printf '%s\n' "$expected_marker" >"$RELEASE_MARKER"
+  chmod 0644 "$RELEASE_MARKER"
+  rm -rf "$work_dir"
+  trap - EXIT
+}
+
+install_vectr_service() {
+  cat >/etc/systemd/system/vectr.service <<'EOF'
+[Unit]
+Description=VECTR Community Edition
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=${data_mount_path}
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=${data_mount_path}/runtime
+ExecStart=/usr/bin/docker compose --project-directory ${data_mount_path}/runtime up -d
+ExecStop=/usr/bin/docker compose --project-directory ${data_mount_path}/runtime down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  systemctl daemon-reload
+  systemctl enable --now vectr.service
+  systemctl restart vectr.service
+}
+
+start_ssm_agent
+mount_data_volume
+configure_docker_data_root
+install_docker
+install_vectr_release
+install_vectr_service

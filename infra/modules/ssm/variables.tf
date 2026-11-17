@@ -18,7 +18,8 @@ variable "vpc_region" {
   description = "The region the VPC will be provisioned in"
 }
 
-variable "enabled" {
+variable "enable_ssm_endpoints" {
   type        = bool
-  description = "If true, enables creates the VPC endpoints needed for SSM"
+  description = "Create the three paid interface endpoints used by Systems Manager"
+  default     = false
 }

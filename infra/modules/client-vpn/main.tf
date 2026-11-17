@@ -1,71 +1,54 @@
-# Client VPN endpoint
-# server_certificate_arn and root_certificate_chain_arn can be the same
-resource "aws_ec2_client_vpn_endpoint" "vpn_endpoints" {
-  count                  = var.vpn_enabled ? 1 : 0
-  description            = "Endpoints for VPN connections"
-  server_certificate_arn = data.aws_acm_certificate.vpn_certificate.arn
-  client_cidr_block      = var.vpn_endpoint_cidr
-  split_tunnel           = true
-  transport_protocol     = "udp"
-  dns_servers            = []
-  tags = {
-    "Name" = "Thunderdome VPN"
-  }
-
-  authentication_options {
-    type                       = "certificate-authentication"
-    root_certificate_chain_arn = data.aws_acm_certificate.vpn_certificate.arn
-  }
-
-  connection_log_options {
-    enabled               = var.vpn_logging_enabled
-    cloudwatch_log_group  = aws_cloudwatch_log_group.thunderdome_vpn.name
-    cloudwatch_log_stream = aws_cloudwatch_log_stream.thunderdome_vpn_connections.name
-  }
-}
-
 data "aws_acm_certificate" "vpn_certificate" {
-  domain      = "server.thunderdome.lab"
+  count = var.vpn_enabled ? 1 : 0
+
+  domain      = var.server_certificate_domain
+  statuses    = ["ISSUED"]
   types       = ["IMPORTED"]
   most_recent = true
 }
 
-# VPN Endpoint network associations
-resource "aws_ec2_client_vpn_network_association" "vuln" {
-  count                  = var.vpn_enabled ? 1 : 0
-  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.vpn_endpoints[0].id
-  subnet_id              = var.vuln_subnet_id
+resource "aws_ec2_client_vpn_endpoint" "this" {
+  count = var.vpn_enabled ? 1 : 0
+
+  description            = "Thunderdome Client VPN"
+  server_certificate_arn = data.aws_acm_certificate.vpn_certificate[0].arn
+  client_cidr_block      = var.vpn_endpoint_cidr
+  vpc_id                 = var.vpc_id
+  security_group_ids     = [var.vpn_security_group_id]
+  dns_servers            = [var.vpc_dns_server]
+  split_tunnel           = true
+  transport_protocol     = "udp"
+
+  authentication_options {
+    type                       = "certificate-authentication"
+    root_certificate_chain_arn = data.aws_acm_certificate.vpn_certificate[0].arn
+  }
+
+  connection_log_options {
+    enabled               = var.vpn_logging_enabled
+    cloudwatch_log_group  = var.vpn_logging_enabled ? aws_cloudwatch_log_group.client_vpn[0].name : null
+    cloudwatch_log_stream = var.vpn_logging_enabled ? aws_cloudwatch_log_stream.client_vpn[0].name : null
+  }
+
+  tags = merge(var.common_tags, {
+    Name = "${var.name_prefix}-client-vpn"
+  })
 }
 
-# Ingress Authorization
-resource "null_resource" "ingress_auth" {
-  provisioner "local-exec" {
-    command = "aws ec2 authorize-client-vpn-ingress --client-vpn-endpoint-id ${aws_ec2_client_vpn_endpoint.vpn_endpoints[0].id} --authorize-all-groups --target-network-cidr 10.0.0.0/17"
-  }
-  # Need to wait until the endpoint is created
-  depends_on = [aws_ec2_client_vpn_endpoint.vpn_endpoints[0]]
+resource "aws_ec2_client_vpn_network_association" "this" {
+  count = var.vpn_enabled ? 1 : 0
+
+  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this[0].id
+  subnet_id              = var.association_subnet_id
 }
 
-# Apply security group to VPN target network association
-resource "null_resource" "vpn_sec_group_assoc" {
-  provisioner "local-exec" {
-    command = "aws ec2 apply-security-groups-to-client-vpn-target-network --security-group-ids ${var.vpn_endpoint_sec_group_id} --vpc-id ${var.vpc_id} --client-vpn-endpoint-id ${aws_ec2_client_vpn_endpoint.vpn_endpoints[0].id}"
-  }
-  depends_on = [aws_ec2_client_vpn_endpoint.vpn_endpoints[0]]
-}
+resource "aws_ec2_client_vpn_authorization_rule" "vpc" {
+  count = var.vpn_enabled ? 1 : 0
 
-# Download Client VPN Client Configuration File
-resource "null_resource" "download_config" {
-  provisioner "local-exec" {
-    command = "aws ec2 export-client-vpn-client-configuration --client-vpn-endpoint-id ${aws_ec2_client_vpn_endpoint.vpn_endpoints[0].id} --output text > ../.vpn-info/config.ovpn"
-  }
-  # Need to wait until the endpoint is created
-  depends_on = [aws_ec2_client_vpn_endpoint.vpn_endpoints[0]]
-}
+  client_vpn_endpoint_id = aws_ec2_client_vpn_endpoint.this[0].id
+  target_network_cidr    = var.vpc_cidr
+  authorize_all_groups   = true
+  description            = "Authorize certificate-authenticated clients to the Thunderdome VPC"
 
-resource "null_resource" "gen_vpn_config" {
-  provisioner "local-exec" {
-    command = "/bin/bash ${path.root}/../scripts/gen_vpn_config.sh"
-  }
-  depends_on = [null_resource.download_config]
+  depends_on = [aws_ec2_client_vpn_network_association.this]
 }

@@ -4,9 +4,12 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd -- "${SCRIPT_DIR}/../.." && pwd)
+source "${SCRIPT_DIR}/testlib.sh"
+
 TEST_ROOT=$(mktemp -d "${REPO_ROOT}/.setup-test.XXXXXX")
 COMMAND_LOG="${TEST_ROOT}/commands.log"
 FAKE_BIN="${TEST_ROOT}/bin"
+TERRAFORM_VERSION_FILE="${TEST_ROOT}/terraform-version"
 
 cleanup() {
   rm -rf "${TEST_ROOT}"
@@ -15,6 +18,7 @@ trap cleanup EXIT
 
 mkdir -p "${FAKE_BIN}"
 mkdir -p "${TEST_ROOT}/tmp"
+printf '%s\n' "0.12.26" >"${TERRAFORM_VERSION_FILE}"
 
 cat >"${FAKE_BIN}/fake-command" <<'EOF'
 #!/usr/bin/env bash
@@ -49,22 +53,33 @@ case "${command_name}" in
     printf '%s\n' "amd64"
     ;;
   jq)
-    printf '%s\n' "https://releases.hashicorp.com/terraform/0.12.26/terraform_0.12.26_linux_amd64.zip"
+    input=$(cat)
+    if [[ "$*" == "-r .terraform_version" ]]; then
+      sed -n 's/.*"terraform_version":"\([^"]*\)".*/\1/p' <<<"${input}"
+    fi
     ;;
   lsb_release)
     printf '%s\n' "noble"
     ;;
-  packer)
-    printf '%s\n' "Packer v1.16.2"
-    ;;
   sudo)
+    if [[ "$*" == "apt-get install --reinstall -y terraform" ]]; then
+      printf '%s\n' "1.17.2" >"${SETUP_TEST_TERRAFORM_VERSION_FILE}"
+    fi
     cat >/dev/null
     ;;
+  sha256sum)
+    checksum_input=$(cat)
+    printf 'sha256sum-input %s\n' "${checksum_input}" >>"${SETUP_TEST_LOG}"
+    ;;
   terraform)
-    printf '%s\n' "Terraform v1.17.2"
+    if [[ "${1:-}" == "version" && "${2:-}" == "-json" ]]; then
+      printf '{"terraform_version":"%s"}\n' "$(<"${SETUP_TEST_TERRAFORM_VERSION_FILE}")"
+    else
+      printf 'Terraform v%s\n' "$(<"${SETUP_TEST_TERRAFORM_VERSION_FILE}")"
+    fi
     ;;
   terraform-docs)
-    printf '%s\n' "terraform-docs version v0.25.1"
+    printf '%s\n' "terraform-docs version v0.24.0"
     ;;
   wget)
     printf '%s\n' "test-key"
@@ -73,31 +88,32 @@ esac
 EOF
 chmod +x "${FAKE_BIN}/fake-command"
 
-for command_name in curl dpkg gpg jq lsb_release packer sudo tar terraform terraform-docs tee wget; do
+for command_name in curl dpkg gpg jq lsb_release sha256sum sudo tar terraform terraform-docs tee wget; do
   ln -s fake-command "${FAKE_BIN}/${command_name}"
 done
 
 export SETUP_TEST_LOG="${COMMAND_LOG}"
+export SETUP_TEST_TERRAFORM_VERSION_FILE="${TERRAFORM_VERSION_FILE}"
 (
   cd "${REPO_ROOT}/scripts"
   TMPDIR="${TEST_ROOT}/tmp" PATH="${FAKE_BIN}:/usr/bin:/bin" bash ./setup.sh
 )
 
-assert_logged() {
-  local expected=$1
-  if ! grep -Fq -- "${expected}" "${COMMAND_LOG}"; then
-    printf 'Expected installer command was not run: %s\n' "${expected}" >&2
-    printf '%s\n' "Recorded commands:" >&2
-    cat "${COMMAND_LOG}" >&2
-    return 1
-  fi
-}
+assert_file_contains "wget -O - https://apt.releases.hashicorp.com/gpg" "${COMMAND_LOG}"
+assert_file_contains "sudo gpg --dearmor --yes -o /usr/share/keyrings/hashicorp-archive-keyring.gpg" "${COMMAND_LOG}"
+assert_file_contains "sudo tee /etc/apt/sources.list.d/hashicorp.list" "${COMMAND_LOG}"
+assert_file_contains "sudo apt-get install -y terraform" "${COMMAND_LOG}"
+assert_file_contains "sudo apt-get install --reinstall -y terraform" "${COMMAND_LOG}"
+assert_file_contains "sudo apt-get install -y ca-certificates curl gnupg jq lsb-release unzip wget" "${COMMAND_LOG}"
+assert_file_contains "https://github.com/terraform-docs/terraform-docs/releases/download/v0.24.0/terraform-docs-v0.24.0-linux-amd64.tar.gz" "${COMMAND_LOG}"
+assert_file_contains "9005daf969de0b50134493a2c00078b49f5f5b39d021cda7c89bf4d4f3d776d3" "${COMMAND_LOG}"
+assert_file_contains "terraform version -json" "${COMMAND_LOG}"
+assert_file_contains "terraform init" "${COMMAND_LOG}"
+assert_file_excludes "packer" "${COMMAND_LOG}"
 
-assert_logged "wget -O - https://apt.releases.hashicorp.com/gpg"
-assert_logged "sudo gpg --dearmor --yes -o /usr/share/keyrings/hashicorp-archive-keyring.gpg"
-assert_logged "sudo tee /etc/apt/sources.list.d/hashicorp.list"
-assert_logged "sudo apt-get install -y packer terraform"
-assert_logged "https://terraform-docs.io/dl/v0.25.1/terraform-docs-v0.25.1-Linux-amd64.tar.gz"
-assert_logged "terraform init"
+if [[ "$(<"${TERRAFORM_VERSION_FILE}")" != "1.17.2" ]]; then
+  printf '%s\n' "Terraform executable was not repaired by reinstall" >&2
+  exit 1
+fi
 
 printf '%s\n' "setup installer test passed"

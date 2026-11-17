@@ -1,15 +1,8 @@
-# VPN Config files
-.vpn-info/*
+# Local credentials and generated VPN artifacts
+.vpn-info/
 
-### Packer ###
-# Cache objects
-**/packer_cache/*
-
-**/output-*/*
-
-# For built boxes
-*.box
-*.ova
+# Private operator notes and deployment design
+/docs/superpowers/
 
 ### Terraform ###
 # Local .terraform directories
@@ -39,4 +32,15 @@ override.tf.json
 # !example_override.tf
 
 # Include tfplan files to ignore the plan output of command: terraform plan -out=tfplan
-# example: *tfplan*
+*.tfplan
+
+# Generated operator inputs must never be committed
+*.auto.tfvars
+*.auto.tfvars.json
+generated.tfvars
+generated.tfvars.json
+
+# Local test workspaces
+.setup-test.*/
+.terraform-docs-test.*/
+.superpowers/
