@@ -11,11 +11,13 @@ output "vuln_subnet_name" {
 output "offense_subnet_id" {
   value       = aws_subnet.offense.id
   description = "The subnet-id for the offense subnet"
+  depends_on  = [aws_route_table_association.offense]
 }
 
-output "dmz_subnet_id" {
-  value       = aws_subnet.dmz.id
-  description = "The subnet-id for the DMZ subnet"
+output "vectr_subnet_id" {
+  value       = aws_subnet.vectr.id
+  description = "The subnet ID for the private VECTR subnet"
+  depends_on  = [aws_route_table_association.vectr]
 }
 
 output "endpoint_subnet_id" {
@@ -25,7 +27,7 @@ output "endpoint_subnet_id" {
 
 output "vpn_endpoint_sec_group_id" {
   value       = aws_security_group.vpn_endpoints.id
-  description = "The subnet-id for the vpc endpoints subnet"
+  description = "The security group for Client VPN target network associations"
 }
 
 output "vpc_id" {
@@ -38,9 +40,9 @@ output "offense_security_group" {
   description = "The security group for offense instances"
 }
 
-output "dmz_security_group" {
-  value       = aws_security_group.dmz.id
-  description = "The security group for DMZ instances"
+output "vectr_security_group" {
+  value       = aws_security_group.vectr.id
+  description = "The security group for the private VECTR instance"
 }
 
 output "vpc_endpoint_security_group" {
@@ -67,6 +69,11 @@ output "NETWORK_NAT" {
 output "NETWORK_ENDPOINTS" {
   value       = aws_subnet.interface_endpoints.cidr_block
   description = "The CIDR block for the VPC endpoints subnet, used to print to terminal"
+}
+
+output "NETWORK_VECTR" {
+  value       = aws_subnet.vectr.cidr_block
+  description = "The CIDR block for the private VECTR subnet, used to print to terminal"
 }
 
 output "NETWORK_offense" {

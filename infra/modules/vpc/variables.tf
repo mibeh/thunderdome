@@ -30,10 +30,10 @@ variable "vuln_subnet_cidr" {
   description = "The CIDR block for the Vulnerable subnet"
 }
 
-variable "dmz_subnet_cidr" {
+variable "vectr_subnet_cidr" {
   type        = string
   default     = "10.0.130.16/28"
-  description = "The CIDR block for the DMZ subnet"
+  description = "The CIDR block for the private VECTR subnet"
 }
 
 variable "interface_endpoint_subnet_cidr" {
@@ -46,27 +46,4 @@ variable "nat_subnet_cidr" {
   type        = string
   default     = "10.0.130.32/28"
   description = "The CIDR block for the NAT subnet"
-}
-
-variable "vpn_cidr" {
-  type        = string
-  description = "The CIDR block for the VPN endpoints"
-}
-
-variable "offense_instance_iam_profile" {
-  type        = string
-  default     = "offenseInstanceRole"
-  description = "The IAM profile applied to the offense instance"
-}
-
-variable "vuln_instance_type" {
-  type        = string
-  default     = "t3a.small"
-  description = "The type of instance to use for Windows Server 2016+ instances"
-}
-
-variable "vuln_instance_iam_profile" {
-  type        = string
-  default     = "VulnerableInstanceRole"
-  description = "The IAM profile applied to the vulnerable instances"
 }

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly MARKER_DIR=/var/lib/thunderdome-bootstrap
+readonly SSM_MARKER=$MARKER_DIR/ssm-agent.ready
+readonly TOOLS_MARKER=$MARKER_DIR/kali-tools.ready
+
+install_ssm_agent() {
+  if [[ -f "$SSM_MARKER" ]]; then
+    return
+  fi
+
+  install -d -m 0755 "$MARKER_DIR"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y ca-certificates curl
+
+  local agent_package
+  agent_package=$(mktemp /tmp/amazon-ssm-agent.XXXXXX.deb)
+  curl --fail --location --silent --show-error \
+    --output "$agent_package" \
+    https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/debian_amd64/amazon-ssm-agent.deb
+
+  if ! dpkg --install "$agent_package"; then
+    apt-get install -f -y
+    dpkg --install "$agent_package"
+  fi
+
+  rm -f "$agent_package"
+  systemctl enable --now amazon-ssm-agent
+  touch "$SSM_MARKER"
+}
+
+install_kali_tools() {
+  if [[ -f "$TOOLS_MARKER" ]]; then
+    return
+  fi
+
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y ${kali_metapackage}
+  touch "$TOOLS_MARKER"
+}
+
+install_ssm_agent
+install_kali_tools

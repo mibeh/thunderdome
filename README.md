@@ -1,175 +1,228 @@
 # Thunderdome Cyber Range
 
-## Introduction
+Thunderdome creates a single-Availability-Zone AWS cyber range with private Kali and VECTR hosts. Operators reach VECTR through AWS Client VPN and reach the hosts through AWS Systems Manager. The EC2 instances do not receive public IP addresses; a public NAT gateway provides outbound access for first-boot installation and updates.
 
-Thunderdome is a fully cloud-based cyberrange, deployed in AWS, that can be used by small teams to practice active offense/defense exercises including purple teaming, detection tuning, and incident response practice. 
+The repository uses the current official Kali AWS Marketplace image and Canonical Ubuntu 22.04 for VECTR. It does not build custom AMIs. Automated tests validate the Terraform and bootstrap logic locally, but a successful local test does not prove that a particular AWS account has the required permissions, service quotas, Marketplace entitlement, or network capacity. Review the saved Terraform plan before applying it.
 
-## Network Diagram
+![Thunderdome network diagram](./thunderdome_network_diagram.jpg)
 
-![alt text](./thunderdome_network_diagram.jpg)
+## Prerequisites
 
-## Design Details
+You need:
 
-This project organized into several modules. First is the VPC,  which contains the base network infrastructure, access control and network segmentation, VPC endpoints, launch templates, and various minor things. Next is the VPN module, which contains all of the resources which are needed to create the Client VPN endpoint. VPN Certificate management and user client configurations are handled 
+- A Linux workstation with Bash and administrative access for package installation.
+- AWS CLI credentials for the target account. Short-term credentials from `aws login`, IAM Identity Center, or another supported credential process are preferred.
+- Permission to inspect and accept the pinned Kali Marketplace offer, import an ACM certificate, and manage the AWS resources in `infra/`.
+- OpenVPN or another AWS Client VPN-compatible client.
+- The [Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) for interactive host verification.
 
-**AWS CLI credentials need to be configured before doing anything.**
+The setup script installs Terraform 1.10 or newer, terraform-docs 0.24.0, `jq`, and the required operating-system packages. It also initializes the Terraform root module.
 
-## Terraform
+```bash
+git clone <repository-url> thunderdome
+cd thunderdome
+scripts/setup.sh
+```
 
-### Installation
+Authenticate, then verify the account before continuing:
 
-`git clone <clone url> && cd thunderdome/`
+```bash
+export THUNDERDOME_ACCOUNT_ID=123456789012
+export AWS_REGION=us-east-1
+aws sts get-caller-identity
+```
 
-`cd scripts/ && ./setup.sh`
+Every AWS-mutating helper requires the expected 12-digit account ID and refuses to continue when the authenticated account differs. Add `--profile PROFILE_NAME` to the helper commands if you do not use the default AWS credential chain.
 
-If you want to use the Client VPN option:
+## Cost-bearing resources
 
-`./gen_vpn_certs.sh`
+This stack incurs AWS charges while it exists. Review the current regional pricing before applying it. The main cost-bearing resources are:
 
-### Workflow
+- A public NAT gateway, its Elastic IP address, processed data, and data transfer.
+- An AWS Client VPN endpoint association, active client connections, public IPv4 addresses used by the service, and CloudWatch connection logs.
+- Kali and VECTR EC2 instances and their encrypted gp3 volumes.
+- A Route 53 private hosted zone.
+- Three optional Systems Manager interface endpoints when `enable_ssm_endpoints = true`.
 
-*General Spin Up/ Tear Down:*
-`terraform plan`
-`terraform apply [-auto-approve]`
-`terraform destroy [-auto-approve]`
+The Kali Marketplace software offer is pinned to the official free offer, but the EC2 instance, storage, networking, and related AWS services are billed separately. See [AWS Client VPN pricing](https://aws.amazon.com/vpn/pricing/), [Amazon VPC pricing](https://aws.amazon.com/vpc/pricing/), [Amazon EC2 pricing](https://aws.amazon.com/ec2/pricing/), and [Amazon CloudWatch pricing](https://aws.amazon.com/cloudwatch/pricing/).
 
-*Making Changes to Existing Resources:*
-* `terraform state list` - List current resources
-* `terraform state rm <resource>` - Remove a resource from the state 
-* `terraform import <name> <aws-id>` - Import an existing resource into the state 
-* `terraform state show <name>` - After importing, use to get the current config JSON then copy paste into the .tf file
-* `terraform refresh` - Refresh the current state based on the source files
+## Configure feature flags
 
-### Terraform Notes
+Defaults create one Kali instance, private VECTR, Client VPN with connection logging, and no paid Systems Manager interface endpoints. To override them, create `infra/local.auto.tfvars`; this filename is ignored by Git.
 
-Most, if not all, terraform commands need to be run from the root module (`thunderdome/infra`). Each module contains a `main.tf` that contains the core resources for that module, `variables.tf` which contains the input variables, and `outputs.tf` which are the values export from the module. Outputs from the root module are printed to the terminal after a successful `terraform apply`.
+```hcl
+enable_vpn           = true
+vpn_logging_enabled = true
+enable_vectr         = true
+kali_count           = 1
+enable_ssm_endpoints = false
+```
 
-In order to use a value from one module in another, it is necessary to export the desired value in the `outputs.tf` in the source module and create a variable for that value in the destination module. This value is assigned to the variable in the root module in the block where the destination module is defined.
+`enable_vectr = true` requires `enable_vpn = true` because VECTR has no public access path. A zero `kali_count` omits Kali. Disabling `enable_ssm_endpoints` removes only the three paid interface endpoints; the instances retain Systems Manager agents and IAM profiles and can register through the NAT gateway.
 
-There are some actions which can't be completed with Terraform. In those cases, if the action can be done with the awscli, you can create a `null` resource to run the awscli command locally to perform the action.
+The default region and Availability Zone are `us-east-1` and `us-east-1a`. If you change `AWS_REGION`, set matching `vpc_region` and `vpc_availability_zone` values in the same tfvars file before preparing certificates or planning.
 
-To generate new input/output documentation for each module, simply run `scripts/gen_terraform_docs.sh` which uses `terrraform-docs`.
+The remaining network, release, tagging, and feature inputs are documented in [infra/README.md](infra/README.md).
 
-## Client VPN Endpoint Details
+## Review and accept the Kali offer
 
-* Client VPN Endpoint details configured in `thunderdome/infra/modules/client-vpn/main.tf`:
-	* Domain validation via Route 53
-	* CIDR Block
-	* Securtiy Group
-	* Subnet Associations
-	* Transport Protocol
-	* Connection Logging
-	* Server certificate ARN
-	* Split Tunnel
+The default command is read-only. It verifies the fixed listing, product, publisher, AMI fulfillment method, free software price, legal term, and support term, then reports any active agreement.
 
-### Generate VPN certs
+```bash
+scripts/accept_kali_marketplace.sh \
+  --account-id "$THUNDERDOME_ACCOUNT_ID"
+```
 
-Running `scripts/gen_vpn_certs.sh` will generate the necessary certificates and keys and upload the server certificate to AWS ACM. Resulting files will be placed in `.vpn-info/`.
+Acceptance is a separate, binding action. Re-run with `--accept`, review the generated quote, and type the exact confirmation requested by the script:
 
-### Client Configuration File
+```bash
+scripts/accept_kali_marketplace.sh \
+  --account-id "$THUNDERDOME_ACCOUNT_ID" \
+  --accept
+```
 
-When the VPC is created via terraform, the configuration file for the Client VPN Endpoint will be automatically downloaded to `.vpn-info/config.ovpn`. 
+Use `--yes` only in an automation context where a human has already approved that exact account and quote. The helper refuses changed product identifiers, publishers, terms, fulfillment methods, expiration, or nonzero Marketplace software charges. The official listing is [Kali Linux on AWS Marketplace](https://aws.amazon.com/marketplace/pp/prodview-fznsw3f7mq7to).
 
-### Initiate VPN Connection
-`sudo openvpn config.ovpn`
+## Prepare Client VPN certificates
 
-*Verify `tun` interface created and an IP in 10.0.132.0/22 assigned*
+Generate the private certificate authority, server certificate, and client certificate before planning the VPN. The helper imports only the server certificate and key into ACM. Private material remains under the Git-ignored `.vpn-info/` directory.
 
-### VPN connection Logging
+```bash
+scripts/prepare_vpn.sh \
+  --account-id "$THUNDERDOME_ACCOUNT_ID" \
+  --region "$AWS_REGION"
+```
 
-Connections to the Client VPN Endpoint are logged to the `thunderdome_vpn_connection_logs` Log Stream in the `thunderdome_vpn` Log Group in CloudWatch.
+Existing usable certificate material is preserved. Pass `--rotate` only when you intend to replace it; rotation can require replacing the Client VPN endpoint.
 
-## SSM Setup
+## Plan and apply
 
-### Configure SSM Preferences
-`AWS Systems Manager Console > Instances & Nodes > Session Manager > Preferences`
-Options that can be changed here include:
-*	S3 configuration (enable, bucket name, encryption)
-	- Currently configured to use `thunderdome-ssm-logs`.
-* 	Run as user (ec2-user, ubuntu, etc.)
-*	CloudWatch log stream / log group
+Run Terraform through the account-guarding wrapper. It exports short-term credentials only to the Terraform child process and sets the required `expected_aws_account_id` input.
 
-### Local Setup
+```bash
+scripts/terraform.sh --account-id "$THUNDERDOME_ACCOUNT_ID" -- \
+  -chdir=infra init
 
-[Install the SSM commandline plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+scripts/terraform.sh --account-id "$THUNDERDOME_ACCOUNT_ID" -- \
+  -chdir=infra plan -out=thunderdome.tfplan
+```
 
-[Enable SSH & SCP through SSM](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-getting-started-enable-ssh-connections.html)
+Before applying, inspect the plan for:
 
-### Using SSM to connect to Instances
+- The expected account and region.
+- No public IP addresses on Kali or VECTR.
+- One NAT gateway and only the intended public Elastic IP address.
+- The intended EC2 instance counts and types, encrypted EBS volumes, IAM attachments, security groups, network ACLs, and Client VPN authorization.
+- Zero Systems Manager endpoints unless `enable_ssm_endpoints` was explicitly enabled.
+- No unexplained replacement or destruction.
 
-**AWS CLI:**
+Apply the reviewed saved plan:
 
-`aws ssm start-session --target <instance-id>`
+```bash
+scripts/terraform.sh --account-id "$THUNDERDOME_ACCOUNT_ID" -- \
+  -chdir=infra apply thunderdome.tfplan
+```
 
-**SSH/SCP:**
+Terraform keeps state locally in `infra/terraform.tfstate`. The state is Git-ignored but can still contain sensitive infrastructure metadata. Store it securely, do not run concurrent Terraform operations, and back it up before changing or destroying the stack. This repository does not configure remote state or state locking.
 
-`ssh -i <key-file> <username>@<instance-id>`
+## Export and connect to Client VPN
 
-`scp -i <key-file> /local/path <username>@<instance-id>:/remote/path`
+After apply completes, export the AWS profile and embed the local client certificate and key:
 
-## Building AMIs
+```bash
+scripts/export_vpn_config.sh \
+  --account-id "$THUNDERDOME_ACCOUNT_ID" \
+  --region "$AWS_REGION"
+```
 
-Custom AMIs are built using [Packer](https://packer.io/docs/). They can either be started from an existing AMI, an ISO, or OVF. If starting from an ISO or OVF, the machine must first be built locally on a hypervisor (VMWare, Virtualbox), exported, uploaded to S3, and have the `vmimport` process started on it. Packer can handle all of this automatically. When building a machine locally, make sure your system has enough resources allocated to be able to build the VM.  
+The generated `.vpn-info/config.ovpn` is written with mode `0600`. Treat it as a credential and do not share or commit it.
 
-### Using Packer
+Connect with an OpenVPN-compatible client. On Linux:
 
-Useful commands:
+```bash
+sudo openvpn --config .vpn-info/config.ovpn
+```
 
-`packer fix template.json` - Linter, need to copy & paste to source file
+Confirm that the tunnel receives an address from `172.31.252.0/22`, then verify private DNS:
 
-`packer validate template.json` - Template validation
+```bash
+getent hosts thunderdome.lab
+```
 
-`packer build template.json` - Build AMI from template
+## Verify first-boot readiness
 
-Debugging:
+Kali and VECTR install software after EC2 reports `running`. Package downloads and container image pulls can take several minutes. Do not treat instance state alone as application readiness.
 
-`tail -f /tmp/packer-log*` - Follow log file
+List the generated Kali session commands:
 
-`export PACKER_LOG=1` - Send DEBUG logs to stdout, set prior to building
+```bash
+terraform -chdir=infra output -json kali_ssm_session_commands
+```
 
-`export AWS_MAX_ATTEMPTS=1500` - Increase number of tries to upload image. default 720 attempts, 5sec interval between each
+Start a session with one of those commands and verify the bootstrap marker:
 
-`packer build -debug -on-error=ask template.json` - Build and interact on error
+```bash
+sudo test -f /var/lib/thunderdome-bootstrap/kali-tools.ready
+```
 
-### Finding Existing AMIs
+For the default VECTR name, locate its instance and start a Systems Manager session:
 
-You can search for a particular AWS Marketplace AMI [here](https://aws.amazon.com/marketplace/search/results?page=1&filters=fulfillment_options&fulfillment_options=AMI) or from the Launch Instance Wizard in the EC2 console.
+```bash
+VECTR_INSTANCE_ID=$(aws ec2 describe-instances \
+  --region "$AWS_REGION" \
+  --filters 'Name=tag:Name,Values=thunderdome-vectr' 'Name=instance-state-name,Values=running' \
+  --query 'Reservations[].Instances[].InstanceId' \
+  --output text)
+aws ssm start-session --region "$AWS_REGION" --target "$VECTR_INSTANCE_ID"
+```
 
-To retrieve the owner id for an AMI (needed for Packer template), you can do the following:
+On VECTR, both commands must succeed before using the application:
 
-Search for and select desired image > Click `Continue to Subscribe` > Click `Continue to Configuration` > Get `ami-id` from page
+```bash
+sudo systemctl is-active vectr.service
+sudo docker compose --project-directory /opt/vectr/runtime ps
+```
 
-`aws ec2 describe-images --image-ids <ami-id> --region us-east-1 | jq -r .Images[0].OwnerId`
+While connected to Client VPN, open `https://thunderdome.lab:8081`. VECTR Community Edition generates an untrusted self-signed certificate by default, so a browser warning is expected. Verify that the hostname is `thunderdome.lab`; then follow the [VECTR SSL certificate guidance](https://docs.vectr.io/ssl/SSL_Certificates/) if you choose to import its generated CA. Do not disable certificate verification globally. Complete the VECTR first-login setup in the application.
 
-OR to list all available versions of a particular AMI along with the owner id:
+## Destroy the range
 
-Search for and select desired image > Click `Continue to Subscribe` > get value of `productId` parameter from URL
+An explicit full destroy deletes the VECTR data volume, even though that separate volume survives an ordinary VECTR instance replacement. Export any data you need before continuing.
 
-`aws ec2 describe-images --owners aws-marketplace --filters "Name=name,Values=*<productID>*" | jq -r '.Images[] | "\(.OwnerId)\t\(.Name)"'`
+Create and inspect a saved destroy plan:
 
-To find an AWS Community AMI:
+```bash
+scripts/terraform.sh --account-id "$THUNDERDOME_ACCOUNT_ID" -- \
+  -chdir=infra plan -destroy -out=destroy.tfplan
 
-EC2 Console Dashboard > `Launch Instance` > Search for desired AMI and select `Community AMIs` on the left.
+scripts/terraform.sh --account-id "$THUNDERDOME_ACCOUNT_ID" -- \
+  -chdir=infra apply destroy.tfplan
+```
 
-AMIs that your account has access to, including those owned by you can be viewed in `EC2 Console > Images > AMIs`. Filter in the search bar.
+The ACM server certificate imported by `prepare_vpn.sh` and the local `.vpn-info/` credentials are outside Terraform state and remain after destroy. Keep them if you will redeploy. Delete them separately only after confirming that no remaining Client VPN endpoint or user needs them.
+
+## Development and generated documentation
+
+Run the complete local checks from the repository root. Module-specific commands are listed in `AGENTS.md` and the implementation plan under `docs/superpowers/`.
+
+Regenerate Terraform input and output tables after changing module interfaces:
+
+```bash
+scripts/gen_terraform_docs.sh
+```
+
+The generator uses the terraform-docs version installed by `scripts/setup.sh` and atomically replaces the root and module README files.
 
 ## Acknowledgements
 
-[VECTR](https://github.com/SecurityRiskAdvisors/VECTR)
-
-[Kali](https://www.offensive-security.com/kali-linux-vm-vmware-virtualbox-image-download/)
-
-[Terraform](https://terraform.io)
-
-[Packer](https://packer.io)
-
-[terraform-docs](https://github.com/segmentio/terraform-docs)
-
-[EasyRSA](https://github.com/OpenVPN/easy-rsa)
+- [VECTR Community Edition](https://github.com/SecurityRiskAdvisors/VECTR)
+- [Kali Linux](https://www.kali.org/)
+- [Terraform](https://developer.hashicorp.com/terraform)
+- [terraform-docs](https://terraform-docs.io/)
+- [EasyRSA](https://github.com/OpenVPN/easy-rsa)
 
 ## License
 
 [MIT License](./LICENSE.txt)
 
 Copyright (c) 2020 Michael Ibeh
- 

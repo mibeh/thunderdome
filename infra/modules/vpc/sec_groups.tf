@@ -1,342 +1,224 @@
-# Security Groups
 resource "aws_security_group" "vulnerable" {
-  description = "Security group for vulnerable instances"
+  name_prefix = "thunderdome-vulnerable-"
+  description = "Traffic for deliberately vulnerable range instances"
   vpc_id      = aws_vpc.thunderdome_vpc.id
+
   tags = {
     Name = "Thunderdome Vulnerable"
   }
-  egress = [
-    {
-      cidr_blocks = [
-        "0.0.0.0/0",
-      ]
-      description      = "HTTP"
-      from_port        = 80
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 80
-    },
-    {
-      cidr_blocks = [
-        "0.0.0.0/0",
-      ]
-      description      = "HTTPS"
-      from_port        = 443
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 443
-    },
-    {
-      cidr_blocks = [
-        var.offense_subnet_cidr,
-      ]
-      description      = "Offense TCP"
-      from_port        = 1024
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 65535
-    },
-    {
-      cidr_blocks = [
-        var.offense_subnet_cidr,
-      ]
-      description      = "Offense UDP"
-      from_port        = 1024
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "udp"
-      security_groups  = []
-      self             = false
-      to_port          = 65535
-    },
-  ]
-
-  ingress = [
-    {
-      cidr_blocks = [
-        var.vuln_subnet_cidr,
-      ]
-      description      = "RDP from VPN"
-      from_port        = 3389
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 3389
-    },
-    {
-      cidr_blocks = [
-        var.offense_subnet_cidr,
-      ]
-      description      = "Offense Traffic"
-      from_port        = 0
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "-1"
-      security_groups  = []
-      self             = false
-      to_port          = 0
-    },
-    {
-      cidr_blocks = [
-        var.vuln_subnet_cidr,
-      ]
-      description      = "SSH from VPN"
-      from_port        = 22
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 22
-    },
-    {
-      cidr_blocks = [
-        var.vuln_subnet_cidr,
-      ]
-      description      = "HTTP from VPN"
-      from_port        = 80
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 80
-    },
-    {
-      cidr_blocks = [
-        var.vuln_subnet_cidr,
-      ]
-      description      = "RDP from VPN"
-      from_port        = 443
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 443
-    }
-  ]
 }
 
+resource "aws_vpc_security_group_ingress_rule" "vulnerable_from_offense" {
+  security_group_id            = aws_security_group.vulnerable.id
+  referenced_security_group_id = aws_security_group.offense.id
+  ip_protocol                  = "-1"
+  description                  = "Attack traffic from offensive instances"
+}
 
+resource "aws_vpc_security_group_ingress_rule" "vulnerable_from_vpn" {
+  for_each = {
+    http  = 80
+    https = 443
+    rdp   = 3389
+    ssh   = 22
+  }
+
+  security_group_id            = aws_security_group.vulnerable.id
+  referenced_security_group_id = aws_security_group.vpn_endpoints.id
+  from_port                    = each.value
+  to_port                      = each.value
+  ip_protocol                  = "tcp"
+  description                  = "${upper(each.key)} from Client VPN"
+}
+
+resource "aws_vpc_security_group_egress_rule" "vulnerable_callback" {
+  for_each = toset(["tcp", "udp"])
+
+  security_group_id            = aws_security_group.vulnerable.id
+  referenced_security_group_id = aws_security_group.offense.id
+  from_port                    = 1024
+  to_port                      = 65535
+  ip_protocol                  = each.value
+  description                  = "${upper(each.value)} callbacks to offensive instances"
+}
+
+resource "aws_vpc_security_group_egress_rule" "vulnerable_web" {
+  for_each = toset(["80", "443"])
+
+  security_group_id = aws_security_group.vulnerable.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = tonumber(each.key)
+  to_port           = tonumber(each.key)
+  ip_protocol       = "tcp"
+  description       = "Package and Systems Manager traffic"
+}
+
+resource "aws_vpc_security_group_egress_rule" "vulnerable_dns_udp" {
+  security_group_id = aws_security_group.vulnerable.id
+  cidr_ipv4         = var.vpc_cidr
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "udp"
+  description       = "VPC DNS"
+}
+
+resource "aws_vpc_security_group_egress_rule" "vulnerable_dns_tcp" {
+  security_group_id = aws_security_group.vulnerable.id
+  cidr_ipv4         = var.vpc_cidr
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "tcp"
+  description       = "VPC DNS fallback"
+}
 
 resource "aws_security_group" "offense" {
+  name_prefix = "thunderdome-offense-"
+  description = "Traffic for private offensive instances"
+  vpc_id      = aws_vpc.thunderdome_vpc.id
+
   tags = {
     Name = "Thunderdome Offense"
   }
-  description = "Security group for offensive instances"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "offense_ssh_from_vpn" {
+  security_group_id            = aws_security_group.offense.id
+  referenced_security_group_id = aws_security_group.vpn_endpoints.id
+  from_port                    = 22
+  to_port                      = 22
+  ip_protocol                  = "tcp"
+  description                  = "SSH from Client VPN"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "offense_callback" {
+  for_each = toset(["tcp", "udp"])
+
+  security_group_id            = aws_security_group.offense.id
+  referenced_security_group_id = aws_security_group.vulnerable.id
+  from_port                    = 1024
+  to_port                      = 65535
+  ip_protocol                  = each.value
+  description                  = "${upper(each.value)} callbacks from vulnerable instances"
+}
+
+resource "aws_vpc_security_group_egress_rule" "offense_to_vulnerable" {
+  security_group_id = aws_security_group.offense.id
+  cidr_ipv4         = var.vuln_subnet_cidr
+  ip_protocol       = "-1"
+  description       = "Attack traffic to vulnerable subnet"
+}
+
+resource "aws_vpc_security_group_egress_rule" "offense_web" {
+  for_each = toset(["80", "443"])
+
+  security_group_id = aws_security_group.offense.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = tonumber(each.key)
+  to_port           = tonumber(each.key)
+  ip_protocol       = "tcp"
+  description       = "Package and Systems Manager traffic"
+}
+
+resource "aws_vpc_security_group_egress_rule" "offense_dns_udp" {
+  security_group_id = aws_security_group.offense.id
+  cidr_ipv4         = var.vpc_cidr
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "udp"
+  description       = "VPC DNS"
+}
+
+resource "aws_vpc_security_group_egress_rule" "offense_dns_tcp" {
+  security_group_id = aws_security_group.offense.id
+  cidr_ipv4         = var.vpc_cidr
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "tcp"
+  description       = "VPC DNS fallback"
+}
+
+resource "aws_security_group" "vectr" {
+  name_prefix = "thunderdome-vectr-"
+  description = "Private VECTR access through Client VPN"
   vpc_id      = aws_vpc.thunderdome_vpc.id
 
+  tags = {
+    Name = "Thunderdome VECTR"
+  }
 }
 
-resource "aws_security_group_rule" "offense_3" {
-  description       = "offense TCP"
-  type              = "ingress"
-  from_port         = 1024
-  to_port           = 65535
-  protocol          = "tcp"
-  security_group_id = aws_security_group.offense.id
-  cidr_blocks       = ["10.0.0.0/17"]
+resource "aws_vpc_security_group_ingress_rule" "vectr_from_vpn" {
+  for_each = toset(["443", "8081"])
+
+  security_group_id            = aws_security_group.vectr.id
+  referenced_security_group_id = aws_security_group.vpn_endpoints.id
+  from_port                    = tonumber(each.key)
+  to_port                      = tonumber(each.key)
+  ip_protocol                  = "tcp"
+  description                  = "VECTR access from Client VPN"
 }
 
-resource "aws_security_group_rule" "offense_4" {
-  description       = "offense UDP"
-  type              = "ingress"
-  from_port         = 1024
-  to_port           = 65535
-  protocol          = "udp"
-  security_group_id = aws_security_group.offense.id
-  cidr_blocks       = ["10.0.0.0/17"]
+resource "aws_vpc_security_group_egress_rule" "vectr_web" {
+  for_each = toset(["80", "443"])
+
+  security_group_id = aws_security_group.vectr.id
+  cidr_ipv4         = "0.0.0.0/0"
+  from_port         = tonumber(each.key)
+  to_port           = tonumber(each.key)
+  ip_protocol       = "tcp"
+  description       = "VECTR updates and Systems Manager traffic"
 }
 
-resource "aws_security_group_rule" "offense_5" {
-  description       = "HTTP"
-  type              = "egress"
-  from_port         = 80
-  to_port           = 80
-  protocol          = "tcp"
-  security_group_id = aws_security_group.offense.id
-  cidr_blocks       = ["0.0.0.0/0"]
+resource "aws_vpc_security_group_egress_rule" "vectr_dns_udp" {
+  security_group_id = aws_security_group.vectr.id
+  cidr_ipv4         = var.vpc_cidr
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "udp"
+  description       = "VPC DNS"
 }
 
-resource "aws_security_group_rule" "offense_6" {
-  description       = "HTTPS"
-  type              = "egress"
-  from_port         = 443
-  to_port           = 443
-  protocol          = "tcp"
-  security_group_id = aws_security_group.offense.id
-  cidr_blocks       = ["0.0.0.0/0"]
-}
-
-resource "aws_security_group_rule" "offense_7" {
-  description       = "offense Traffic"
-  type              = "egress"
-  from_port         = 0
-  to_port           = 0
-  protocol          = "-1"
-  security_group_id = aws_security_group.offense.id
-  cidr_blocks       = ["10.0.0.0/17"]
+resource "aws_vpc_security_group_egress_rule" "vectr_dns_tcp" {
+  security_group_id = aws_security_group.vectr.id
+  cidr_ipv4         = var.vpc_cidr
+  from_port         = 53
+  to_port           = 53
+  ip_protocol       = "tcp"
+  description       = "VPC DNS fallback"
 }
 
 resource "aws_security_group" "vpn_endpoints" {
-  tags = {
-    Name = "VPN Endpoints"
-  }
-  description = "Security group for VPN endpoints"
+  name_prefix = "thunderdome-client-vpn-"
+  description = "Client VPN traffic into the private range"
   vpc_id      = aws_vpc.thunderdome_vpc.id
-  egress = [
-    {
-      cidr_blocks = [
-        var.vuln_subnet_cidr,
-      ]
-      description      = "RDP to Vuln"
-      from_port        = 3389
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 3389
-    },
-    {
-      cidr_blocks = [
-        var.vuln_subnet_cidr,
-      ]
-      description      = "SSH to Vuln"
-      from_port        = 22
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 22
-    },
-  ]
+
+  tags = {
+    Name = "Thunderdome Client VPN"
+  }
+}
+
+resource "aws_vpc_security_group_egress_rule" "vpn_to_vpc" {
+  security_group_id = aws_security_group.vpn_endpoints.id
+  cidr_ipv4         = var.vpc_cidr
+  ip_protocol       = "-1"
+  description       = "Authorized Client VPN traffic to the VPC"
 }
 
 resource "aws_security_group" "interface_endpoints" {
+  name_prefix = "thunderdome-interface-endpoints-"
+  description = "Private interface endpoints"
+  vpc_id      = aws_vpc.thunderdome_vpc.id
+
   tags = {
     Name = "Thunderdome Interface Endpoints"
   }
-  description = "Security group for Interface Endpoints"
-  vpc_id      = aws_vpc.thunderdome_vpc.id
-  egress = [
-    {
-      cidr_blocks = [
-        "0.0.0.0/0",
-      ]
-      description      = "HTTPS for Interface Endpoints"
-      from_port        = 443
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 443
-    },
-  ]
-  ingress = [
-    {
-      cidr_blocks = [
-        var.vpc_cidr,
-      ]
-      description      = "HTTPS for Interface Endpoints"
-      from_port        = 443
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 443
-    },
-  ]
 }
 
-resource "aws_security_group" "dmz" {
-  tags = {
-    Name = "Thunderdome DMZ"
-  }
-  description = "Security gropud for DMZ"
-  vpc_id      = aws_vpc.thunderdome_vpc.id
-  egress = [
-    {
-      cidr_blocks = [
-        "0.0.0.0/0",
-      ]
-      description      = "HTTPS DMZ"
-      from_port        = 443
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 443
-    },
-    {
-      cidr_blocks = [
-        "0.0.0.0/0",
-      ]
-      description      = "HTTP DMZ"
-      from_port        = 80
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 80
-    },
-    {
-      cidr_blocks = [
-        "0.0.0.0/0",
-      ]
-      description      = "Needed for VECTR updates"
-      from_port        = 81
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 81
-    },
-  ]
-  ingress = [
-    {
-      cidr_blocks = [
-        "0.0.0.0/0",
-      ]
-      description      = "HTTPS from Internet"
-      from_port        = 443
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 443
-    },
-    {
-      cidr_blocks = [
-        "0.0.0.0/0",
-      ]
-      description      = "VECTR from Internet"
-      from_port        = 8081
-      ipv6_cidr_blocks = []
-      prefix_list_ids  = []
-      protocol         = "tcp"
-      security_groups  = []
-      self             = false
-      to_port          = 8081
-    },
-  ]
+resource "aws_vpc_security_group_ingress_rule" "interface_endpoints_https" {
+  security_group_id = aws_security_group.interface_endpoints.id
+  cidr_ipv4         = var.vpc_cidr
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+  description       = "HTTPS from private range hosts"
 }

@@ -35,7 +35,7 @@ resource "aws_route_table_association" "offense" {
 resource "aws_route_table" "nat" {
   vpc_id = aws_vpc.thunderdome_vpc.id
   tags = {
-    Name = "Thunderdoem NAT Route Table"
+    Name = "Thunderdome NAT Route Table"
   }
   route {
     cidr_block = "0.0.0.0/0"
@@ -48,19 +48,31 @@ resource "aws_route_table_association" "nat" {
   route_table_id = aws_route_table.nat.id
 }
 
-
-resource "aws_route_table" "dmz" {
+resource "aws_route_table" "vectr" {
   vpc_id = aws_vpc.thunderdome_vpc.id
   tags = {
-    Name = "Thunderdome DMZ Route Table"
+    Name = "Thunderdome VECTR Route Table"
   }
   route {
-    cidr_block = "0.0.0.0/0"
-    gateway_id = aws_internet_gateway.igw.id
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
   }
 }
 
-resource "aws_route_table_association" "dmz" {
-  subnet_id      = aws_subnet.dmz.id
-  route_table_id = aws_route_table.dmz.id
+resource "aws_route_table_association" "vectr" {
+  subnet_id      = aws_subnet.vectr.id
+  route_table_id = aws_route_table.vectr.id
+}
+
+resource "aws_route_table" "interface_endpoints" {
+  vpc_id = aws_vpc.thunderdome_vpc.id
+
+  tags = {
+    Name = "Thunderdome Interface Endpoints Route Table"
+  }
+}
+
+resource "aws_route_table_association" "interface_endpoints" {
+  subnet_id      = aws_subnet.interface_endpoints.id
+  route_table_id = aws_route_table.interface_endpoints.id
 }
